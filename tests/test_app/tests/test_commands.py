@@ -1,10 +1,14 @@
 import json
+import os
+import tempfile
+from io import StringIO
 from datetime import timedelta
 from django.core.management import CommandError
 from django.utils import timezone
 import reversion
-from test_app.models import TestModel
+from test_app.models import TestMeta, TestModel
 from test_app.tests.base import TestBase, TestModelMixin
+from reversion.models import Revision
 
 
 class CreateInitialRevisionsTest(TestModelMixin, TestBase):
@@ -207,3 +211,111 @@ class DeleteRevisionsKeepTest(TestModelMixin, TestBase):
         self.assertSingleRevision((obj_1,), comment="obj_1 v2")
         self.assertSingleRevision((obj_2,), comment="obj_2 v2")
         self.assertSingleRevision((obj_3,))
+
+
+class RetainRevisionsCommandTest(TestModelMixin, TestBase):
+
+    def _history(self, obj):
+        with reversion.create_revision():
+            obj.name = "v1"
+            obj.save()
+            reversion.set_comment("old")
+        with reversion.create_revision():
+            obj.name = "RELEASE"
+            obj.save()
+            reversion.set_comment("RELEASE marker")
+        with reversion.create_revision():
+            obj.name = "v3"
+            obj.save()
+            reversion.set_comment("wip")
+        with reversion.create_revision():
+            obj.name = "v4"
+            obj.save()
+            reversion.set_comment("current")
+
+    def testRetainRevisionsDryRunDeletesNothing(self):
+        obj = TestModel.objects.create()
+        self._history(obj)
+        stdout = StringIO()
+        self.callCommand(
+            "retainrevisions", "test_app.TestModel",
+            keep=1, marker=["RELEASE"], verbosity=2, stdout=stdout,
+        )
+        output = stdout.getvalue()
+        self.assertIn("Dry run", output)
+        self.assertIn("DELETE revision", output)
+        self.assertEqual(Revision.objects.count(), 4)
+
+    def testRetainRevisionsExecute(self):
+        obj = TestModel.objects.create()
+        self._history(obj)
+        stdout = StringIO()
+        self.callCommand(
+            "retainrevisions", "test_app.TestModel",
+            keep=1, marker=["RELEASE"], execute=True, verbosity=1, stdout=stdout,
+        )
+        self.assertIn("Deleted 2 revision(s).", stdout.getvalue())
+        comments = set(Revision.objects.values_list("comment", flat=True))
+        self.assertEqual(comments, {"RELEASE marker", "current"})
+        # The marked recovery point still reverts after pruning.
+        release = Revision.objects.get(comment="RELEASE marker")
+        release.revert()
+        obj.refresh_from_db()
+        self.assertEqual(obj.name, "RELEASE")
+
+    def testRetainRevisionsPlanFileDetectsDrift(self):
+        obj = TestModel.objects.create()
+        self._history(obj)
+        plan_fd, plan_path = tempfile.mkstemp(suffix=".json")
+        os.close(plan_fd)
+        try:
+            self.callCommand(
+                "retainrevisions", "test_app.TestModel",
+                keep=1, marker=["RELEASE"], plan_file=plan_path, verbosity=0,
+            )
+            # New revision written after the preview.
+            with reversion.create_revision():
+                obj.name = "v5"
+                obj.save()
+                reversion.set_comment("after preview")
+            with self.assertRaises(CommandError):
+                self.callCommand(
+                    "retainrevisions", "test_app.TestModel",
+                    keep=1, marker=["RELEASE"],
+                    execute=True, plan_file=plan_path, verbosity=0,
+                )
+            # Nothing deleted despite the rejected execution.
+            self.assertEqual(Revision.objects.count(), 5)
+            # Re-running the dry run refreshes the plan and execution succeeds.
+            self.callCommand(
+                "retainrevisions", "test_app.TestModel",
+                keep=1, marker=["RELEASE"], plan_file=plan_path, verbosity=0,
+            )
+            self.callCommand(
+                "retainrevisions", "test_app.TestModel",
+                keep=1, marker=["RELEASE"],
+                execute=True, plan_file=plan_path, verbosity=0,
+            )
+            comments = set(Revision.objects.values_list("comment", flat=True))
+            self.assertEqual(
+                comments,
+                {"RELEASE marker", "after preview"},
+            )
+        finally:
+            os.remove(plan_path)
+
+    def testRetainRevisionsKeepsMetaReferencedRevision(self):
+        obj = TestModel.objects.create()
+        self._history(obj)
+        with reversion.create_revision():
+            obj.name = "meta edit"
+            obj.save()
+            reversion.add_meta(TestMeta, name="audit")
+            reversion.set_comment("meta only")
+        self.callCommand(
+            "retainrevisions", "test_app.TestModel",
+            keep=1, execute=True, verbosity=0,
+        )
+        self.assertTrue(
+            Revision.objects.filter(comment="meta only").exists()
+        )

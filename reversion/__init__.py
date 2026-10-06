@@ -17,6 +17,7 @@ else:
         RevertError,
         RevisionManagementError,
         RegistrationError,
+        RetentionPlanStale,
     )
     from reversion.revisions import (  # noqa
         is_active,
@@ -34,6 +35,11 @@ else:
         is_registered,
         unregister,
         get_registered_models,
+    )
+    from reversion.retention import (  # noqa
+        build_retention_plan,
+        check_retention_plan,
+        execute_retention_plan,
     )
 
 __version__ = VERSION = (6, 3, 0)

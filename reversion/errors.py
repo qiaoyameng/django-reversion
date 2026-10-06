@@ -11,3 +11,8 @@ class RevisionManagementError(Exception):
 class RegistrationError(Exception):
 
     """Exception thrown when registration with django-reversion goes wrong."""
+
+
+class RetentionPlanStale(Exception):
+
+    """Thrown when a retention plan is executed against a changed version set."""

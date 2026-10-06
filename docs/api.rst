@@ -487,3 +487,46 @@ Contains metadata about a revision, and groups together all :ref:`Version` insta
 
     ``delete``
         If ``True``, any model instances which have been created and are reachable by the ``follow`` clause of any model instances in this revision will be deleted. This effectively restores a group of related models to the state they were in when the revision was created.
+
+
+Retention plans
+---------------
+
+A retention plan prunes old revisions while preserving the ability to revert.
+
+``reversion.build_retention_plan(models, keep=0, markers=(), days=0, using=None, model_db=None)``
+
+    Returns a ``RetentionPlan`` describing which revisions would be deleted.
+
+    ``models``
+        An iterable of registered model classes covered by the plan.
+
+    ``keep``
+        Number of most recent versions retained for every object. A revision
+        shared by several objects is kept whole whenever any of its versions is
+        retained, because sibling versions may be required to revert it.
+
+    ``markers``
+        Iterable of comment substrings. Every revision whose comment contains a
+        marker is kept as an explicit recovery point, regardless of age or
+        ``keep``.
+
+    ``days``
+        When given, revisions younger than this many days are never deleted.
+
+    The returned plan exposes ``delete_revision_ids``, ``kept_revision_ids``,
+    ``version_reasons`` and ``revision_reasons`` (the latter two map row ids to
+    human readable retention/deletion reasons), ``delete_version_ids`` and a
+    ``snapshot`` fingerprint of the revision tables.
+
+``reversion.check_retention_plan(plan)``
+
+    Raises ``reversion.RetentionPlanStale`` if revisions or versions have been
+    written or deleted since the plan was built.
+
+``reversion.execute_retention_plan(plan, dry_run=False)``
+
+    Deletes the plan's revisions inside a transaction. The snapshot is
+    re-checked first, so a plan executed after new revisions were written raises
+    ``reversion.RetentionPlanStale`` and deletes nothing. ``dry_run=True``
+    performs the check without deleting and always returns ``0``.
