@@ -19,6 +19,7 @@ from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
 
 from reversion.errors import RevertError
+from reversion.adapters import adapt_version_data, split_format_version
 from reversion.revisions import (_follow_relations_recursive, _get_content_type,
                                  _get_options)
 
@@ -277,7 +278,17 @@ class Version(models.Model):
         data = self.serialized_data
         data = force_str(data.encode("utf8"))
         try:
-            return list(serializers.deserialize(self.format, data, ignorenonexistent=True,
+            object_version = adapt_version_data(
+                self._model,
+                self.format,
+                data,
+                use_natural_foreign_keys=version_options.use_natural_foreign_keys,
+                using=self.db,
+            )
+            if object_version is not None:
+                return object_version[0]
+            serializer_format, _ = split_format_version(self.format)
+            return list(serializers.deserialize(serializer_format, data, ignorenonexistent=True,
                         use_natural_foreign_keys=version_options.use_natural_foreign_keys))[0]
         except DeserializationError:
             raise RevertError(gettext("Could not load %(object_repr)s version - incompatible version data.") % {

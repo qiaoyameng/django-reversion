@@ -174,6 +174,10 @@ Registration API
     ``format="json"``
         The name of a Django serialization format to use when saving the model instance.
 
+    ``format_version=1``
+        The format version written into the version's ``format`` field. Versions greater than ``1``
+        are stored as ``"<format>@<version>"``. Register read adapters to load older format versions.
+
     ``for_concrete_model=True``
         If ``True`` proxy models will be saved under the same content type as their concrete model. If ``False``, proxy models will be saved under their own content type, effectively giving proxy models their own distinct history.
 
@@ -219,6 +223,29 @@ Registration API
 ``reversion.get_registered_models()``
 
     Returns an iterable of all registered models.
+
+
+Format version adapters
+------------------------
+
+``reversion.register_adapter(model, source_version, target_version, adapter)``
+
+    Registers a read-only callback that transforms a copy of one old serialization record list to
+    the next format version. The callback receives the pure serialized data and a context with the
+    model, Django serializer name, source version, and target version. It does not receive a
+    database connection or revision object.
+
+    After the chain completes, the resulting fields are deserialized against the current model,
+    so field renames, type conversions, and relationship IDs are validated before preview or revert.
+
+``reversion.unregister_adapter(model, source_version, target_version)``
+
+    Removes a registered format version adapter.
+
+``reversion.get_adapter_chain(model, source_version, target_version)``
+
+    Returns the ordered adapter chain used to read an old format version. Raises ``RevertError`` if
+    a required step is missing or the registered adapters contain a cycle.
 
 
 .. _revision-api:

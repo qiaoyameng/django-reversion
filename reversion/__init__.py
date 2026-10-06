@@ -35,5 +35,11 @@ else:
         unregister,
         get_registered_models,
     )
+    from reversion.adapters import (  # noqa
+        VersionAdapterContext,
+        register_adapter,
+        unregister_adapter,
+        get_adapter_chain,
+    )
 
 __version__ = VERSION = (6, 3, 0)

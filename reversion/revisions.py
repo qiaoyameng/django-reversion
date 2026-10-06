@@ -11,6 +11,7 @@ from django.db.models.signals import post_save, m2m_changed
 from django.utils.encoding import force_str
 from django.utils import timezone
 from reversion.errors import RevisionManagementError, RegistrationError
+from reversion.adapters import DEFAULT_FORMAT_VERSION, FORMAT_VERSION_SEPARATOR
 from reversion.signals import pre_revision_commit, post_revision_commit
 
 
@@ -21,7 +22,8 @@ _VersionOptions = namedtuple("VersionOptions", (
     "for_concrete_model",
     "ignore_duplicates",
     "use_natural_foreign_keys",
-    "object_id_field"
+    "object_id_field",
+    "format_version",
 ))
 
 
@@ -181,7 +183,7 @@ def _add_to_revision(obj, using, model_db, explicit):
         content_type=content_type,
         object_id=object_id,
         db=model_db,
-        format=version_options.format,
+        format=_get_version_format(version_options),
         serialized_data=serializers.serialize(
             version_options.format,
             (obj,),
@@ -355,6 +357,12 @@ def _get_registration_key(model):
     return (model._meta.app_label, model._meta.model_name)
 
 
+def _get_version_format(version_options):
+    if version_options.format_version == DEFAULT_FORMAT_VERSION:
+        return version_options.format
+    return f"{version_options.format}{FORMAT_VERSION_SEPARATOR}{version_options.format_version}"
+
+
 _registered_models = {}
 
 
@@ -381,7 +389,9 @@ def _get_senders_and_signals(model):
 
 
 def register(model=None, fields=None, exclude=(), follow=(), format="json",
-             for_concrete_model=True, ignore_duplicates=False, use_natural_foreign_keys=False, object_id_field=None):
+             for_concrete_model=True, ignore_duplicates=False,
+             use_natural_foreign_keys=False, object_id_field=None,
+             format_version=DEFAULT_FORMAT_VERSION):
     def register(model):
         # Prevent multiple registration.
         if is_registered(model):
@@ -395,6 +405,8 @@ def register(model=None, fields=None, exclude=(), follow=(), format="json",
         else:
             model._meta.get_field(object_id_field)
             id_field = object_id_field
+        if not isinstance(format_version, int) or isinstance(format_version, bool) or format_version < 1:
+            raise RegistrationError("format_version must be a positive integer.")
 
         version_options = _VersionOptions(
             fields=tuple(
@@ -413,6 +425,7 @@ def register(model=None, fields=None, exclude=(), follow=(), format="json",
             ignore_duplicates=ignore_duplicates,
             use_natural_foreign_keys=use_natural_foreign_keys,
             object_id_field=id_field,
+            format_version=format_version,
         )
         # Register the model.
         _registered_models[_get_registration_key(model)] = version_options

@@ -155,3 +155,16 @@ class TestModelWithUniqueConstraint(models.Model):
 class TestModelCustomObjectId(models.Model):
     slug = models.CharField(max_length=191, unique=True)
     name = models.CharField(max_length=191, default="v1")
+
+
+class TestModelVersionAdapter(models.Model):
+
+    first_name = models.CharField(max_length=191)
+    last_name = models.CharField(max_length=191)
+    related_count = models.IntegerField()
+    related = models.ForeignKey(
+        TestModelRelated,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+    )
