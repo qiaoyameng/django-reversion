@@ -321,6 +321,102 @@ Revision API
     .. include:: /_include/model-db-arg.rst
 
 
+``reversion.bulk_create_revision(objs, batch_size=None, ignore_conflicts=False, using=None, model_db=None, user=None, comment="", meta=(), date_created=None)``
+
+    Performs a ``bulk_create()`` of the given objects and records a single revision
+    containing a version of every object that was actually inserted.
+
+    Since ``bulk_create()`` does not emit ``post_save`` signals, objects created
+    this way would otherwise be missing from the version history. Versions are
+    built from the state re-fetched from the database after the insert, never
+    from the (possibly unsaved) input objects.
+
+    Throws :ref:`RegistrationError` if the model is not registered.
+
+    ``objs``
+        A list of unsaved instances of the same registered model.
+
+    ``batch_size``
+        Passed through to ``QuerySet.bulk_create()``.
+
+    ``ignore_conflicts``
+        Passed through to ``QuerySet.bulk_create()``. Only supported when all
+        objects have a caller-set primary key, since the database does not
+        report which rows were inserted. Rows that already existed are excluded
+        from the revision.
+
+    ``using``
+        The database the revision is stored in. Defaults to the default
+        revision database.
+
+    .. include:: /_include/model-db-arg.rst
+
+    ``user``
+        The user to store against the revision.
+
+    ``comment``
+        The comment to store against the revision.
+
+    ``meta``
+        An iterable of ``(model, values)`` pairs to store as revision metadata,
+        as per ``reversion.add_meta()``.
+
+    ``date_created``
+        The creation date for the revision.
+
+    Objects with an auto-increment primary key are only supported on databases
+    where ``can_return_rows_from_bulk_insert`` is enabled (PostgreSQL, MariaDB,
+    SQLite 3.35+). Combinations where the set of inserted rows cannot be
+    determined raise ``RevisionManagementError``.
+
+
+``reversion.bulk_update_revision(objs, fields, batch_size=None, using=None, model_db=None, user=None, comment="", meta=(), date_created=None)``
+
+    Performs a ``bulk_update()`` of the given objects and records a single
+    revision containing a version of every object that exists in the database
+    after the update.
+
+    Since ``bulk_update()`` does not emit ``post_save`` signals, objects updated
+    this way would otherwise be missing from the version history. Versions are
+    built from the state re-fetched from the database after the update, so
+    fields not included in ``fields`` reflect their persisted values, not stale
+    in-memory ones.
+
+    Throws :ref:`RegistrationError` if the model is not registered.
+
+    ``objs``
+        A list of instances of the same registered model, all with a primary
+        key set.
+
+    ``fields``
+        The fields to update, passed through to ``QuerySet.bulk_update()``.
+
+    ``batch_size``
+        Passed through to ``QuerySet.bulk_update()``.
+
+    ``using``
+        The database the revision is stored in. Defaults to the default
+        revision database.
+
+    .. include:: /_include/model-db-arg.rst
+
+    ``user``
+        The user to store against the revision.
+
+    ``comment``
+        The comment to store against the revision.
+
+    ``meta``
+        An iterable of ``(model, values)`` pairs to store as revision metadata,
+        as per ``reversion.add_meta()``.
+
+    ``date_created``
+        The creation date for the revision.
+
+    The bulk operation and the revision are saved in a single transaction, so a
+    rollback leaves neither business data nor versions behind.
+
+
 .. _VersionQuerySet:
 
 reversion.models.VersionQuerySet

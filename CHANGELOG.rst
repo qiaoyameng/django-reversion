@@ -3,6 +3,14 @@
 django-reversion changelog
 ==========================
 
+Unreleased
+----------
+
+- Added ``reversion.bulk_create_revision()`` and ``reversion.bulk_update_revision()``
+  to record revisions for objects written with ``QuerySet.bulk_create()`` and
+  ``QuerySet.bulk_update()``, which do not emit ``post_save`` signals.
+
+
 6.3.0 - 2026-06-12
 ------------------
 

@@ -30,6 +30,8 @@ else:
         add_meta,
         add_to_revision,
         create_revision,
+        bulk_create_revision,
+        bulk_update_revision,
         register,
         is_registered,
         unregister,

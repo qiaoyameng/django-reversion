@@ -340,6 +340,107 @@ class _ContextWrapper:
         return do_revision_context
 
 
+def _get_bulk_model(objs):
+    model = objs[0].__class__
+    for obj in objs:
+        if obj.__class__ is not model:
+            raise RevisionManagementError(
+                "Bulk revision objects must all be of the same model"
+            )
+    _assert_registered(model)
+    return model
+
+
+def _save_bulk_revision(model, pks, using, model_db, user, comment, meta, date_created):
+    if not pks:
+        return
+    # Re-fetch the objects from the database, so that versions are created
+    # from the state that was actually persisted, rather than the (possibly
+    # unsaved) state of the input objects. Objects that were not written to
+    # the database (e.g. skipped by ignore_conflicts, or not matching any row
+    # in bulk_update) are silently excluded.
+    objs = model._base_manager.using(model_db).filter(pk__in=pks)
+    with create_revision(manage_manually=True, using=using, atomic=False):
+        if user is not None:
+            set_user(user)
+        if comment:
+            set_comment(comment)
+        if date_created is not None:
+            set_date_created(date_created)
+        for meta_model, meta_values in meta:
+            add_meta(meta_model, **meta_values)
+        for obj in objs:
+            add_to_revision(obj, model_db=model_db)
+
+
+def bulk_create_revision(objs, batch_size=None, ignore_conflicts=False, using=None, model_db=None,
+                         user=None, comment="", meta=(), date_created=None):
+    objs = list(objs)
+    if not objs:
+        return objs
+    model = _get_bulk_model(objs)
+    model_db = model_db or router.db_for_write(model)
+    # bulk_create() does not emit save signals and, depending on the database
+    # and the options used, may not report which rows were actually inserted.
+    # Refuse option combinations where the set of created objects cannot be
+    # determined.
+    all_pks_set = all(obj.pk is not None for obj in objs)
+    if ignore_conflicts:
+        if not all_pks_set:
+            raise RevisionManagementError(
+                "bulk_create_revision() with ignore_conflicts=True requires all objects to have a "
+                "primary key set, since the database does not report which rows were inserted"
+            )
+    elif not all_pks_set and not connections[model_db].features.can_return_rows_from_bulk_insert:
+        raise RevisionManagementError(
+            "bulk_create_revision() cannot create objects with an auto-increment primary key on this "
+            "database, since the primary keys of the created rows cannot be retrieved"
+        )
+    with transaction.atomic(using=model_db):
+        if ignore_conflicts:
+            # Rows that already exist are skipped by the database, so
+            # exclude them from the revision.
+            existing_pks = frozenset(
+                model._base_manager.using(model_db).filter(
+                    pk__in=[obj.pk for obj in objs],
+                ).values_list("pk", flat=True)
+            )
+        model._base_manager.using(model_db).bulk_create(
+            objs,
+            batch_size=batch_size,
+            ignore_conflicts=ignore_conflicts,
+        )
+        if ignore_conflicts:
+            pks = [obj.pk for obj in objs if obj.pk not in existing_pks]
+        else:
+            pks = [obj.pk for obj in objs]
+        _save_bulk_revision(model, pks, using, model_db, user, comment, meta, date_created)
+    return objs
+
+
+def bulk_update_revision(objs, fields, batch_size=None, using=None, model_db=None,
+                         user=None, comment="", meta=(), date_created=None):
+    objs = list(objs)
+    if not objs:
+        return objs
+    model = _get_bulk_model(objs)
+    model_db = model_db or router.db_for_write(model)
+    if not all(obj.pk is not None for obj in objs):
+        raise RevisionManagementError(
+            "bulk_update_revision() requires all objects to have a primary key set"
+        )
+    with transaction.atomic(using=model_db):
+        model._base_manager.using(model_db).bulk_update(
+            objs,
+            fields,
+            batch_size=batch_size,
+        )
+        _save_bulk_revision(
+            model, [obj.pk for obj in objs], using, model_db, user, comment, meta, date_created,
+        )
+    return objs
+
+
 def _post_save_receiver(sender, instance, using, **kwargs):
     if is_registered(sender) and is_active() and not is_manage_manually():
         add_to_revision(instance, model_db=using)
