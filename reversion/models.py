@@ -19,6 +19,7 @@ from django.utils.translation import gettext
 from django.utils.translation import gettext_lazy as _
 
 from reversion.errors import RevertError
+from reversion.adapters import adapt_serialized_data
 from reversion.revisions import (_follow_relations_recursive, _get_content_type,
                                  _get_options)
 
@@ -276,6 +277,13 @@ class Version(models.Model):
         version_options = _get_options(self._model)
         data = self.serialized_data
         data = force_str(data.encode("utf8"))
+        # Upgrade old data format versions on a copy, leaving the stored
+        # serialized_data untouched. Preview (field_dict) and revert() both
+        # flow through here, so they share the same conversion.
+        data = adapt_serialized_data(
+            self._model, self.format, data,
+            object_id=self.object_id, db=self.db,
+        )
         try:
             return list(serializers.deserialize(self.format, data, ignorenonexistent=True,
                         use_natural_foreign_keys=version_options.use_natural_foreign_keys))[0]

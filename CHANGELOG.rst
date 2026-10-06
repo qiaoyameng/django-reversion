@@ -3,6 +3,17 @@
 django-reversion changelog
 ==========================
 
+Unreleased
+----------
+
+- Added the data adapter API (``reversion.register_data_adapter()``,
+  ``reversion.set_data_version()``) for reading and reverting versions
+  saved with historical serialized data formats, e.g. after a field is
+  split, renamed or changes type. Conversion runs on an in-memory copy of
+  the parsed data; stored ``serialized_data`` and revision metadata are
+  never modified.
+
+
 6.3.0 - 2026-06-12
 ------------------
 

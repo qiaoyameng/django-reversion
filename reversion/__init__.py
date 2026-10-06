@@ -15,8 +15,16 @@ except ImportError:  # pragma: no cover
 else:
     from reversion.errors import (  # noqa
         RevertError,
+        DataAdapterError,
         RevisionManagementError,
         RegistrationError,
+    )
+    from reversion.adapters import (  # noqa
+        DataVersionInfo,
+        register_data_adapter,
+        unregister_data_adapters,
+        set_data_version,
+        get_data_version,
     )
     from reversion.revisions import (  # noqa
         is_active,

@@ -3,6 +3,11 @@ class RevertError(Exception):
     """Exception thrown when something goes wrong with reverting a model."""
 
 
+class DataAdapterError(RevertError):
+
+    """Exception thrown when a data adapter chain cannot upgrade old version data."""
+
+
 class RevisionManagementError(Exception):
 
     """Exception that is thrown when something goes wrong with revision managment."""

@@ -221,6 +221,51 @@ Registration API
     Returns an iterable of all registered models.
 
 
+.. _data-adapter-api:
+
+Data adapter API
+----------------
+
+When a model changes in a way that breaks its serialized representation - for example, a field is split in two, renamed, or changes type - old versions would otherwise become unreadable. Data adapters upgrade the stored serialized data of old versions to the current data format at read time, keeping old versions viewable and recoverable.
+
+The conversion is applied to an in-memory copy of the parsed serialized data. The ``serialized_data`` and revision metadata stored in the database are never modified. Both ``Version.field_dict`` and ``Version.revert()`` apply the same conversion, and the converted data still passes through the normal deserialization checks.
+
+.. code:: python
+
+    # The "name" field was split into "first_name" and "last_name" in data version 2.
+    def split_name(data, info):
+        fields = data[0]["fields"]
+        first, _, last = fields.pop("name").partition(" ")
+        fields["first_name"] = first
+        fields["last_name"] = last
+
+    reversion.register_data_adapter(YourModel, 1, 2, split_name)
+    reversion.set_data_version(
+        YourModel, 2,
+        detect=lambda data: 1 if "name" in data[0]["fields"] else 2,
+    )
+
+``reversion.register_data_adapter(model, from_version, to_version, callback)``
+
+    Registers an adapter that upgrades serialized data for the model from data format version ``from_version`` to ``to_version``. Adapters form an explicit chain via their ``from_version``/``to_version`` links; resolving a chain with a missing step or a cycle throws :ref:`DataAdapterError`.
+
+    The callback is called as ``callback(data, info)``, where ``data`` is the parsed serialized data (a list of ``{"model", "pk", "fields"}`` dicts) and ``info`` is a ``DataVersionInfo`` namedtuple of plain values (``app_label``, ``model_name``, ``object_id``, ``db``, ``format``, ``from_version``, ``to_version``). The callback receives pure data only - it is not given the ``Version`` instance or any database handle. It may mutate ``data`` in place or return a replacement.
+
+    Throws :ref:`RegistrationError` if an adapter for the same ``from_version`` is already registered, if ``from_version == to_version``, or if ``callback`` is not callable.
+
+``reversion.set_data_version(model, version, detect=None)``
+
+    Declares the current data format ``version`` for the model. ``detect``, if given, is called with the parsed serialized data of a stored version and must return the data format version it was saved with. If omitted, stored data is assumed to be at the source version of the adapter chain.
+
+``reversion.get_data_version(model)``
+
+    Returns the current data format version for the model, or ``None``.
+
+``reversion.unregister_data_adapters(model)``
+
+    Removes all data adapters and the data version for the model.
+
+
 .. _revision-api:
 
 Revision API
