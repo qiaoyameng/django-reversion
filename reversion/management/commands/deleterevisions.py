@@ -1,8 +1,12 @@
-from datetime import timedelta
-from django.db import transaction, models, router
-from django.utils import timezone
+from django.core.management.base import CommandError
+from django.db import router
 from reversion.models import Revision, Version
 from reversion.management.commands import BaseRevisionCommand
+from reversion.retention import (
+    RetentionPlanStaleError,
+    RetentionPolicy,
+    build_retention_plan,
+)
 
 
 class Command(BaseRevisionCommand):
@@ -23,72 +27,67 @@ class Command(BaseRevisionCommand):
             type=int,
             help="Keep the specified number of revisions (most recent) for each object.",
         )
+        parser.add_argument(
+            "--keep-comment",
+            action="append",
+            default=[],
+            metavar="TAG",
+            help="Keep restore points whose comment contains TAG. "
+                 "Can be specified multiple times.",
+        )
+        parser.add_argument(
+            "--dry-run",
+            action="store_true",
+            help="Only print the retention plan, without deleting anything.",
+        )
 
     def handle(self, *app_labels, **options):
         verbosity = options["verbosity"]
-        using = options["using"]
+        using = options["using"] or router.db_for_write(Revision)
         model_db = options["model_db"]
-        days = options["days"]
-        keep = options["keep"]
-        # Delete revisions.
-        using = using or router.db_for_write(Revision)
-        with transaction.atomic(using=using):
-            revision_query = models.Q()
-            keep_revision_ids = set()
-            # By default, delete nothing.
-            can_delete = False
-            # Get all revisions for the given revision manager and model.
-            for model in self.get_models(options):
-                if verbosity >= 1:
-                    self.stdout.write("Finding stale revisions for {name}".format(
-                        name=model._meta.verbose_name,
+        dry_run = options["dry_run"]
+        # Build the retention plan (this is the dry-run).
+        policy = RetentionPolicy(
+            models=tuple(self.get_models(options)),
+            keep_last=options["keep"],
+            keep_comments=options["keep_comment"],
+            days=options["days"],
+        )
+        plan = build_retention_plan(policy, using=using, model_db=model_db)
+        # Print out the plan, with a reason for every kept item.
+        if verbosity >= 2:
+            for version in Version.objects.using(using).filter(
+                pk__in=plan.keep_version_reasons.keys(),
+            ).iterator():
+                for reason in plan.keep_version_reasons[version.pk]:
+                    self.stdout.write("- Keeping version #{version_id} ({object_repr}): {reason}".format(
+                        version_id=version.pk,
+                        object_repr=version.object_repr,
+                        reason=reason,
                     ))
-                # Find all matching revision IDs.
-                model_query = Version.objects.using(using).get_for_model(
-                    model,
-                    model_db=model_db,
-                )
-                if keep:
-                    overflow_object_ids = list(Version.objects.using(using).get_for_model(
-                        model,
-                        model_db=model_db,
-                    ).order_by().values_list("object_id").annotate(
-                        count=models.Count("object_id"),
-                    ).filter(
-                        count__gt=keep,
-                    ).values_list("object_id", flat=True).iterator())
-                    # Only delete overflow revisions.
-                    model_query = model_query.filter(object_id__in=overflow_object_ids)
-                    for object_id in overflow_object_ids:
-                        if verbosity >= 2:
-                            self.stdout.write("- Finding stale revisions for {name} #{object_id}".format(
-                                name=model._meta.verbose_name,
-                                object_id=object_id,
-                            ))
-                        # But keep the underflow revisions.
-                        keep_revision_ids.update(Version.objects.using(using).get_for_object_reference(
-                            model,
-                            object_id,
-                            model_db=model_db,
-                        ).values_list("revision_id", flat=True)[:keep].iterator())
-                # Add to revision query.
-                revision_query |= models.Q(
-                    pk__in=model_query.order_by().values_list("revision_id", flat=True)
-                )
-                # If we have at least one model, then we can delete.
-                can_delete = True
-            if can_delete:
-                revisions_to_delete = Revision.objects.using(using).filter(
-                    revision_query,
-                    date_created__lt=timezone.now() - timedelta(days=days),
-                ).exclude(
-                    pk__in=keep_revision_ids
-                ).order_by()
-            else:
-                revisions_to_delete = Revision.objects.using(using).none()
-            # Print out a message, if feeling verbose.
-            if verbosity >= 1:
-                self.stdout.write("Deleting {total} revisions...".format(
-                    total=revisions_to_delete.count(),
+            for revision_id, reasons in sorted(plan.keep_revision_reasons.items()):
+                self.stdout.write("- Keeping revision #{revision_id}: {reasons}".format(
+                    revision_id=revision_id,
+                    reasons=", ".join(reasons),
                 ))
-            revisions_to_delete.delete()
+        revisions_to_delete = plan.get_delete_revisions()
+        versions_to_delete = plan.get_delete_versions()
+        if verbosity >= 1:
+            for revision in revisions_to_delete.iterator():
+                self.stdout.write("- Deleting revision #{revision_id} ({date_created}) {comment}".format(
+                    revision_id=revision.pk,
+                    date_created=revision.date_created,
+                    comment=revision.comment,
+                ))
+            self.stdout.write("{action} {revision_total} revisions and {version_total} versions.".format(
+                action="Would delete" if dry_run else "Deleting",
+                revision_total=len(plan.delete_revision_ids),
+                version_total=versions_to_delete.count(),
+            ))
+        if dry_run:
+            return
+        # Execute the plan, checking that the version set is unchanged.
+        try:
+            plan.execute()
+        except RetentionPlanStaleError as ex:
+            raise CommandError(str(ex))

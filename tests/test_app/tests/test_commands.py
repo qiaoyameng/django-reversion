@@ -1,8 +1,11 @@
 import json
 from datetime import timedelta
+from io import StringIO
+from django.core.management import call_command
 from django.core.management import CommandError
 from django.utils import timezone
 import reversion
+from reversion.models import Revision
 from test_app.models import TestModel
 from test_app.tests.base import TestBase, TestModelMixin
 
@@ -207,3 +210,52 @@ class DeleteRevisionsKeepTest(TestModelMixin, TestBase):
         self.assertSingleRevision((obj_1,), comment="obj_1 v2")
         self.assertSingleRevision((obj_2,), comment="obj_2 v2")
         self.assertSingleRevision((obj_3,))
+
+
+class DeleteRevisionsKeepCommentTest(TestModelMixin, TestBase):
+
+    def testDeleteRevisionsKeepComment(self):
+        with reversion.create_revision():
+            obj = TestModel.objects.create()
+            reversion.set_comment("restore point: release-1.0")
+        self.callCommand("deleterevisions", keep_comment=["release-1.0"])
+        self.assertSingleRevision((obj,), comment="restore point: release-1.0")
+
+    def testDeleteRevisionsKeepCommentNoMatch(self):
+        with reversion.create_revision():
+            TestModel.objects.create()
+            reversion.set_comment("some comment")
+        self.callCommand("deleterevisions", keep_comment=["release-1.0"])
+        self.assertNoRevision()
+
+
+class DeleteRevisionsDryRunTest(TestModelMixin, TestBase):
+
+    def testDeleteRevisionsDryRun(self):
+        with reversion.create_revision():
+            TestModel.objects.create()
+        self.callCommand("deleterevisions", dry_run=True)
+        self.assertEqual(Revision.objects.count(), 1)
+        self.callCommand("deleterevisions")
+        self.assertNoRevision()
+
+    def testDeleteRevisionsDryRunOutput(self):
+        with reversion.create_revision():
+            obj = TestModel.objects.create()
+            reversion.set_comment("restore point: release-1.0")
+        with reversion.create_revision():
+            obj.name = "obj v2"
+            obj.save()
+        out = StringIO()
+        call_command(
+            "deleterevisions",
+            keep_comment=["release-1.0"],
+            dry_run=True,
+            stdout=out,
+            verbosity=2,
+        )
+        output = out.getvalue()
+        self.assertIn("Would delete 1 revisions and 1 versions.", output)
+        self.assertIn("tagged restore point", output)
+        self.assertIn("Keeping revision", output)
+        self.assertEqual(Revision.objects.count(), 2)

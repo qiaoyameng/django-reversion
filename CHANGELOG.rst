@@ -3,6 +3,20 @@
 django-reversion changelog
 ==========================
 
+Unreleased
+----------
+
+- Reworked ``deleterevisions`` around a retention plan: it keeps the most
+  recent ``--keep`` versions per object and restore points tagged with
+  ``--keep-comment``, computes the relational dependencies of those keep
+  targets (versions sharing a revision, revisions referenced by metadata),
+  and lists every kept item with its retention reason. Added ``--dry-run``
+  to preview the plan, and execution now runs in a transaction that first
+  verifies the version set has not changed since the plan was built. The
+  same logic is available via ``reversion.build_retention_plan()`` and
+  ``reversion.RetentionPolicy``.
+
+
 6.3.0 - 2026-06-12
 ------------------
 

@@ -35,5 +35,10 @@ else:
         unregister,
         get_registered_models,
     )
+    from reversion.retention import (  # noqa
+        RetentionPlanStaleError,
+        RetentionPolicy,
+        build_retention_plan,
+    )
 
 __version__ = VERSION = (6, 3, 0)
