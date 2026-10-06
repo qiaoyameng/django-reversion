@@ -212,6 +212,123 @@ def add_to_revision(obj, model_db=None):
         _add_to_revision(obj, db, model_db, True)
 
 
+def _persisted_objects(model, pks, using):
+    # Fetch the rows that actually exist in the database, so versions are
+    # generated from the saved state rather than the input instances.
+    return model._base_manager.using(using).filter(
+        **{f"{_get_options(model).object_id_field}__in": pks}
+    )
+
+
+def bulk_create(objs, batch_size=None, ignore_conflicts=False,
+                update_conflicts=False, update_fields=None,
+                unique_fields=None, model_db=None):
+    """Bulk inserts ``objs`` and records the saved rows in the active revision.
+
+    Unlike :meth:`~django.db.models.QuerySet.bulk_create`, the generated
+    :class:`~reversion.models.Version` rows are built from the objects' state
+    after they have been written to the database, so automatically assigned
+    primary keys and database-side defaults are captured.
+    """
+    if not is_active():
+        raise RevisionManagementError("There is no active revision for this thread")
+    if not objs:
+        return []
+    model = objs[0].__class__
+    _assert_registered(model)
+    using = model_db or router.db_for_write(model)
+    # Rows without an explicit primary key can only be identified after the
+    # insert when the backend returns the generated primary keys. With
+    # ignore_conflicts the database silently skips conflicting rows, and Django
+    # never populates the keys, so it's impossible to tell which rows were
+    # saved. Refuse that combination rather than recording phantom versions.
+    objs_without_pk = [obj for obj in objs if not obj._is_pk_set()]
+    if objs_without_pk and (
+        ignore_conflicts
+        or not connections[using].features.can_return_rows_from_bulk_insert
+    ):
+        raise RevisionManagementError(
+            "Cannot create a revision from bulk_create() with objects that "
+            "have no primary key on a database that cannot return the "
+            "generated primary keys from the bulk insert."
+        )
+    object_id_field = _get_options(model).object_id_field
+    # With ignore_conflicts, rows whose primary key already exists are
+    # silently skipped but the input instances keep their explicit primary
+    # keys. Snapshot the existing keys beforehand so only newly written rows
+    # get versions.
+    existing_pks = set()
+    if ignore_conflicts:
+        explicit_pks = [
+            getattr(obj, object_id_field)
+            for obj in objs
+            if obj._is_pk_set()
+        ]
+        if explicit_pks:
+            existing_pks = set(_persisted_objects(model, explicit_pks, using).values_list(
+                object_id_field, flat=True,
+            ))
+    # Perform the insert. The returned instances carry the generated primary
+    # keys when the backend supports it.
+    objs = model._default_manager.db_manager(using=using).bulk_create(
+        objs,
+        batch_size=batch_size,
+        ignore_conflicts=ignore_conflicts,
+        update_conflicts=update_conflicts,
+        update_fields=update_fields,
+        unique_fields=unique_fields,
+    )
+    pks = [getattr(obj, object_id_field) for obj in objs if obj._is_pk_set()]
+    persisted = list(_persisted_objects(model, pks, using))
+    if ignore_conflicts:
+        persisted = [
+            obj for obj in persisted
+            if getattr(obj, object_id_field) not in existing_pks
+        ]
+    elif len(persisted) != len(pks):
+        raise RevisionManagementError(
+            "Could not determine which objects were saved by bulk_create(); "
+            "refusing to create a revision from an incomplete batch."
+        )
+    for persisted_obj in persisted:
+        add_to_revision(persisted_obj, model_db=using)
+    return objs
+
+
+def bulk_update(objs, fields, batch_size=None, model_db=None):
+    """Bulk updates ``objs`` and records the updated rows in the active revision.
+
+    The generated :class:`~reversion.models.Version` rows are built by
+    reloading the affected rows from the database, so they reflect the saved
+    state of every registered field, not just the fields passed to
+    :meth:`~django.db.models.QuerySet.bulk_update`.
+    """
+    if not is_active():
+        raise RevisionManagementError("There is no active revision for this thread")
+    objs = tuple(objs)
+    if not objs:
+        return 0
+    model = objs[0].__class__
+    _assert_registered(model)
+    using = model_db or router.db_for_write(model)
+    rows_updated = model._default_manager.db_manager(using=using).bulk_update(
+        objs,
+        fields,
+        batch_size=batch_size,
+    )
+    object_id_field = _get_options(model).object_id_field
+    pks = [getattr(obj, object_id_field) for obj in objs if obj._is_pk_set()]
+    persisted = list(_persisted_objects(model, pks, using))
+    if len(persisted) != len(pks):
+        raise RevisionManagementError(
+            "Could not determine which objects were saved by bulk_update(); "
+            "refusing to create a revision from an incomplete batch."
+        )
+    for persisted_obj in persisted:
+        add_to_revision(persisted_obj, model_db=using)
+    return rows_updated
+
+
 def _save_revision(versions, user=None, comment="", meta=(), date_created=None, using=None):
     from reversion.models import Revision
     from reversion.models import Version

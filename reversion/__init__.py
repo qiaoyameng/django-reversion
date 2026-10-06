@@ -29,6 +29,8 @@ else:
         set_date_created,
         add_meta,
         add_to_revision,
+        bulk_create,
+        bulk_update,
         create_revision,
         register,
         is_registered,

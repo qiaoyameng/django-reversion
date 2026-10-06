@@ -3,6 +3,14 @@
 django-reversion changelog
 ==========================
 
+Unreleased
+----------
+
+- Added ``reversion.bulk_create()`` and ``reversion.bulk_update()`` to version rows written with Django's bulk
+  queryset methods, which do not send ``post_save`` signals. Versions are generated from the rows after they are
+  written to the database, and combinations where the saved rows cannot be determined (e.g. ``ignore_conflicts``
+  with automatic primary keys) raise ``RevisionManagementError``.
+
 6.3.0 - 2026-06-12
 ------------------
 
